@@ -25,6 +25,9 @@ jobs:
       - name: List available strategies
         run: ./service.sh strategy list
 
+      - name: Test explicit gamefilter ports
+        run: bash ./ci/test_gamefilter_ports.sh
+
       - name: Run strategy tests
         uses: nick-fields/retry@v3
         with:

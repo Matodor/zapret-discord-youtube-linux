@@ -91,7 +91,16 @@ cd zapret-discord-youtube-linux
 strategy=general.bat
 interface=enp0s3
 gamefiltertcp=true
-gamefiterudp=true
+gamefilterudp=true
+```
+
+Если `gamefiltertcp` или `gamefilterudp` включены, по умолчанию используется широкий
+диапазон `1024-65535`. Чтобы не отправлять весь high-port трафик в NFQUEUE,
+можно явно задать порты:
+
+```bash
+gamefiltertcp_ports=8100,8090,8187,8188,8190,8200,8902,9112,8903,8904,9113,8000,8001,8003,8005,56000-56666,12995,13060,20480-20500,50000-52000
+gamefilterudp_ports=19294-19344,50000-50100
 ```
 
 ## Управление через CLI

@@ -303,6 +303,34 @@ get_strategy_path() {
 # Парсинг .bat файлов стратегий
 # -----------------------------------------------------------------------------
 
+dedupe_port_list() {
+    local ports="$1"
+    local IFS=','
+    local -a parts=()
+    local -a result=()
+    local -A seen=()
+    local port
+
+    read -ra parts <<< "$ports"
+    for port in "${parts[@]}"; do
+        [[ -n "$port" ]] || continue
+        if [[ -z "${seen[$port]:-}" ]]; then
+            seen[$port]=1
+            result+=("$port")
+        fi
+    done
+
+    local output=""
+    for port in "${result[@]}"; do
+        if [[ -n "$output" ]]; then
+            output+=",$port"
+        else
+            output="$port"
+        fi
+    done
+    echo "$output"
+}
+
 # Парсинг параметров из bat файла
 # Устанавливает глобальные переменные: tcp_ports, udp_ports, nfqws_params[]
 # Требует: USE_GAME_FILTER, GAME_FILTER_PORTS
@@ -322,16 +350,20 @@ parse_bat_file() {
 
     # Обрабатываем GameFilter
     if [ "$USE_GAME_FILTER" = true ]; then
-        content="${content//%GameFilter%/$GAME_FILTER_PORTS}"
+        local game_filter_ports="${gamefilter_ports:-$GAME_FILTER_PORTS}"
+        local game_filter_tcp_ports="${gamefiltertcp_ports:-$game_filter_ports}"
+        local game_filter_udp_ports="${gamefilterudp_ports:-$game_filter_ports}"
+
+        content="${content//%GameFilter%/$game_filter_ports}"
         #TCP and UDP
         if [ "$USE_GAME_FILTER_TCP" = true ]; then
-            content="${content//%GameFilterTCP%/$GAME_FILTER_PORTS}"
+            content="${content//%GameFilterTCP%/$game_filter_tcp_ports}"
         else
             content="${content//%GameFilterTCP%/$GAME_FILTER_OFF_PORTS}"
         fi
 
         if [ "$USE_GAME_FILTER_UDP" = true ]; then
-            content="${content//%GameFilterUDP%/$GAME_FILTER_PORTS}"
+            content="${content//%GameFilterUDP%/$game_filter_udp_ports}"
         else
             content="${content//%GameFilterUDP%/$GAME_FILTER_OFF_PORTS}"
         fi
@@ -368,6 +400,8 @@ parse_bat_file() {
     # Извлекаем порты
     tcp_ports=$(echo "$content" | grep -oP -- '--wf-tcp=\K[0-9,-]+' | head -n1)
     udp_ports=$(echo "$content" | grep -oP -- '--wf-udp=\K[0-9,-]+' | head -n1)
+    tcp_ports=$(dedupe_port_list "$tcp_ports")
+    udp_ports=$(dedupe_port_list "$udp_ports")
 
     debug_log "TCP ports: $tcp_ports"
     debug_log "UDP ports: $udp_ports"
