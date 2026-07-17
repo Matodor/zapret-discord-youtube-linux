@@ -344,7 +344,12 @@ parse_bat_file() {
 
     debug_log "File content loaded"
 
-    # Заменяем переменные
+    # Заменяем переменные. Пользовательские списки должны жить вне
+    # zapret-latest, потому что каталог со стратегиями может пересоздаваться.
+    local user_lists_path="$BASE_DIR/user-lists/"
+    content="${content//%LISTS%list-general-user.txt/${user_lists_path}list-general-user.txt}"
+    content="${content//%LISTS%list-exclude-user.txt/${user_lists_path}list-exclude-user.txt}"
+    content="${content//%LISTS%ipset-exclude-user.txt/${user_lists_path}ipset-exclude-user.txt}"
     content="${content//%BIN%/$bin_path}"
     content="${content//%LISTS%/lists/}"
 
