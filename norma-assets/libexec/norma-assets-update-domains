@@ -91,6 +91,8 @@ fi
 state_tmp=$(mktemp "$STATE_DIR/domains-v4.tsv.XXXXXX")
 trap 'rm -f -- "$state_tmp"' EXIT
 declare -A new_ips=()
+resolved_domains=0
+skipped_domains=0
 
 for domain in "${domains[@]}"; do
     resolved=()
@@ -106,12 +108,14 @@ for domain in "${domains[@]}"; do
     if (( ${#resolved[@]} == 0 )); then
         read -ra resolved <<<"${old_domain_ips[$domain]:-}"
         if (( ${#resolved[@]} == 0 )); then
-            echo "no IPv4 answer and no stale state for: $domain" >&2
-            exit 3
+            echo "warning: no IPv4 answer; skipping new domain $domain" >&2
+            (( skipped_domains += 1 ))
+            continue
         fi
         echo "warning: preserving stale IPv4 state for $domain" >&2
     fi
 
+    (( resolved_domains += 1 ))
     declare -A domain_ip_seen=()
     for ip in "${resolved[@]}"; do
         [[ -z ${domain_ip_seen[$ip]+set} ]] || continue
@@ -125,6 +129,11 @@ done
 LC_ALL=C sort -u -o "$state_tmp" "$state_tmp"
 mapfile -t old_ip_list < <(printf '%s\n' "${!old_ips[@]}" | sed '/^$/d' | sort -V)
 mapfile -t new_ip_list < <(printf '%s\n' "${!new_ips[@]}" | sed '/^$/d' | sort -V)
+
+if (( ${#domains[@]} > 0 && ${#new_ip_list[@]} == 0 )); then
+    echo "none of the configured domains has a usable IPv4 address; state unchanged" >&2
+    exit 3
+fi
 
 remote_sync() {
     printf '%s\n' "$@" |
@@ -181,4 +190,4 @@ install -m 600 -o root -g root "$state_tmp" "$STATE_FILE"
 trap - EXIT
 rm -f -- "$state_tmp"
 
-echo "domains=${#domains[@]} ipv4=${#new_ip_list[@]} wg=$(systemctl is-active "$WG_UNIT" 2>/dev/null || true)"
+echo "domains=${#domains[@]} resolved=$resolved_domains skipped=$skipped_domains ipv4=${#new_ip_list[@]} wg=$(systemctl is-active "$WG_UNIT" 2>/dev/null || true)"
