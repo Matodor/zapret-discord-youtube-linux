@@ -1,0 +1,11 @@
+# Exact domain names whose current IPv4 A records must be routed through
+# wg-assets. One domain per line; blank lines and comments are ignored.
+#
+# Wildcards are intentionally unsupported: DNS cannot enumerate every
+# subdomain behind *.example.com. Add each hostname actually used by the
+# application.
+
+chatgpt.com
+auth.openai.com
+cdn.oaistatic.com
+files.oaiusercontent.com

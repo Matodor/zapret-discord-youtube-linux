@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch the norma-assets domain routing list
+
+[Path]
+PathChanged=/home/matodor/Bin/zapret-discord-youtube-linux/norma-assets/domains.txt
+Unit=norma-assets-domains.service
+
+[Install]
+WantedBy=multi-user.target

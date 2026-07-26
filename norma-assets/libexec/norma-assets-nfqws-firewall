@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly FAMILY=inet
+readonly TABLE=norma_assets
+
+stop_firewall() {
+    /usr/sbin/nft delete table "$FAMILY" "$TABLE" 2>/dev/null || true
+}
+
+start_firewall() {
+    stop_firewall
+
+    /usr/sbin/nft add table "$FAMILY" "$TABLE"
+    /usr/sbin/nft \
+        'add chain inet norma_assets output { type filter hook output priority -10; policy accept; }'
+
+    # Only wstunnel sockets carry 0x20000000. Queue them before the stock
+    # zapret output chain, then mark accepted originals as 0x40000000 so
+    # queue 220 does not process them a second time.
+    /usr/sbin/nft \
+        'add rule inet norma_assets output meta mark 0x20000000 tcp dport 443 counter queue num 221 bypass comment "norma-assets dedicated nfqws"'
+    /usr/sbin/nft \
+        'add rule inet norma_assets output meta mark 0x20000000 tcp dport 443 counter meta mark set 0x40000000 comment "norma-assets skip stock queue"'
+}
+
+case "${1:-}" in
+    start)
+        start_firewall
+        ;;
+    stop)
+        stop_firewall
+        ;;
+    *)
+        echo "usage: $0 {start|stop}" >&2
+        exit 2
+        ;;
+esac

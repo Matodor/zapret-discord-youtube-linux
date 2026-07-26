@@ -1,0 +1,31 @@
+[Unit]
+Description=norma-assets secure WebSocket client
+After=network-online.target norma-assets-routing.service norma-assets-nfqws.service
+Wants=network-online.target norma-assets-nfqws.service
+Requires=norma-assets-routing.service
+Before=wg-quick@wg-assets.service
+
+[Service]
+Type=simple
+User=wstunnel
+Group=wstunnel
+EnvironmentFile=/etc/wstunnel/assets-client.env
+ExecStart=/usr/local/bin/wstunnel client --log-lvl=INFO --socket-so-mark=536870912 --tls-verify-certificate --dns-resolver=dns+https://1.1.1.1?sni=cloudflare-dns.com --dns-resolver-prefer-ipv4 --http-upgrade-path-prefix=${WSTUNNEL_PATH} --websocket-ping-frequency=20s -L udp://127.0.0.1:41195:127.0.0.1:41194?timeout_sec=0 wss://assets.norma-cdn.online:443
+Restart=always
+RestartSec=3
+
+NoNewPrivileges=true
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_UNIX
+LockPersonality=true
+RestrictRealtime=true
+
+[Install]
+WantedBy=multi-user.target

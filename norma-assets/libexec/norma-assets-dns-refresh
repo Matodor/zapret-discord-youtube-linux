@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly DNSCRYPT_HOST=127.0.0.1
+readonly DNSCRYPT_PORT=5300
+
+systemctl restart dnscrypt-proxy.service
+
+ready=no
+for _ in {1..30}; do
+    if dig +time=1 +tries=1 +short A cloudflare.com \
+        "@$DNSCRYPT_HOST" -p "$DNSCRYPT_PORT" |
+        grep -qE '^[0-9]+(\.[0-9]+){3}$'; then
+        ready=yes
+        break
+    fi
+    sleep 0.2
+done
+
+if [[ $ready != yes ]]; then
+    echo "dnscrypt-proxy did not become ready on $DNSCRYPT_HOST:$DNSCRYPT_PORT" >&2
+    journalctl -u dnscrypt-proxy.service -n 40 --no-pager >&2 || true
+    exit 1
+fi
+
+resolvectl flush-caches

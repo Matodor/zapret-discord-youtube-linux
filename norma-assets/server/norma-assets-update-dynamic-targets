@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ ${EUID} -ne 0 ]]; then
+    echo "run as root" >&2
+    exit 2
+fi
+
+readonly STATE_DIR=/var/lib/norma-assets
+readonly STATE_FILE="$STATE_DIR/dynamic-targets-v4.txt"
+readonly LOCK_FILE=/run/norma-assets-dynamic-targets.lock
+readonly NFT_TABLE=norma_assets
+readonly NFT_SET=norma_assets_dynamic_v4
+readonly MODE=${1:-update}
+
+[[ $MODE == update || $MODE == --restore ]] || {
+    echo "usage: $0 [--restore]" >&2
+    exit 2
+}
+
+install -d -m 700 "$STATE_DIR"
+exec 9>"$LOCK_FILE"
+flock 9
+
+valid_ipv4() {
+    local ip=$1
+    local octet
+    local -a octets
+    [[ $ip =~ ^[0-9]+(\.[0-9]+){3}$ ]] || return 1
+    IFS='.' read -ra octets <<<"$ip"
+    (( ${#octets[@]} == 4 )) || return 1
+    for octet in "${octets[@]}"; do
+        [[ $octet =~ ^[0-9]+$ ]] || return 1
+        (( 10#$octet <= 255 )) || return 1
+    done
+}
+
+input_tmp=$(mktemp)
+normalized_tmp=$(mktemp)
+nft_tmp=$(mktemp)
+trap 'rm -f -- "$input_tmp" "$normalized_tmp" "$nft_tmp"' EXIT
+
+if [[ $MODE == --restore ]]; then
+    if [[ -f $STATE_FILE ]]; then
+        command cat "$STATE_FILE" >"$input_tmp"
+    fi
+else
+    command cat >"$input_tmp"
+fi
+
+while IFS= read -r ip || [[ -n $ip ]]; do
+    ip=${ip#"${ip%%[![:space:]]*}"}
+    ip=${ip%"${ip##*[![:space:]]}"}
+    [[ -n $ip ]] || continue
+    valid_ipv4 "$ip" || {
+        echo "invalid IPv4 address: $ip" >&2
+        exit 2
+    }
+    printf '%s\n' "$ip" >>"$normalized_tmp"
+done <"$input_tmp"
+
+sort -Vu -o "$normalized_tmp" "$normalized_tmp"
+mapfile -t ips <"$normalized_tmp"
+
+{
+    echo "flush set ip $NFT_TABLE $NFT_SET"
+    if (( ${#ips[@]} > 0 )); then
+        printf 'add element ip %s %s { ' "$NFT_TABLE" "$NFT_SET"
+        printf '%s, ' "${ips[@]}"
+        echo '0.0.0.0 }'
+        echo "delete element ip $NFT_TABLE $NFT_SET { 0.0.0.0 }"
+    fi
+} >"$nft_tmp"
+
+nft -c -f "$nft_tmp"
+nft -f "$nft_tmp"
+
+if [[ $MODE == update ]]; then
+    install -m 600 -o root -g root "$normalized_tmp" "$STATE_FILE"
+fi
+
+echo "dynamic-targets=${#ips[@]}"

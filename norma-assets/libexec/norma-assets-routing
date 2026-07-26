@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+delete_pref() {
+    local pref=$1
+    while /usr/bin/ip -4 rule del pref "$pref" 2>/dev/null; do
+        :
+    done
+}
+
+case "${1:-}" in
+    start)
+        delete_pref 90
+        delete_pref 91
+        /usr/bin/ip -4 rule add pref 90 \
+            fwmark 0x40000000/0xffffffff lookup main
+        /usr/bin/ip -4 rule add pref 91 \
+            fwmark 0x20000000/0xffffffff lookup main
+        ;;
+    stop)
+        delete_pref 91
+        delete_pref 90
+        ;;
+    *)
+        echo "usage: $0 {start|stop}" >&2
+        exit 2
+        ;;
+esac

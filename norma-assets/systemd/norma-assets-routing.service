@@ -1,0 +1,14 @@
+[Unit]
+Description=norma-assets marked egress routing
+After=network-online.target
+Wants=network-online.target
+Before=norma-assets-nfqws.service wstunnel-assets-client.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/norma-assets-routing start
+ExecStop=/usr/local/libexec/norma-assets-routing stop
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

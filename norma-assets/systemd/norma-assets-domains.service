@@ -1,0 +1,8 @@
+[Unit]
+Description=Resolve norma-assets domains and synchronize WireGuard routes
+Wants=network-online.target
+After=network-online.target dnscrypt-proxy.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/norma-assets-update-domains

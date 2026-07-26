@@ -1,0 +1,12 @@
+[Unit]
+Description=Periodically refresh norma-assets domain IPv4 routes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30s
+Persistent=true
+Unit=norma-assets-domains.service
+
+[Install]
+WantedBy=timers.target

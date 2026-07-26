@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ ${EUID} -ne 0 ]]; then
+    echo "run as root" >&2
+    exit 2
+fi
+
+readonly DOMAINS_FILE=/home/matodor/Bin/zapret-discord-youtube-linux/norma-assets/domains.txt
+readonly STATE_DIR=/var/lib/norma-assets
+readonly STATE_FILE="$STATE_DIR/domains-v4.tsv"
+readonly LOCK_FILE=/run/norma-assets-domains.lock
+readonly WG_INTERFACE=wg-assets
+readonly WG_UNIT=wg-quick@wg-assets.service
+readonly WG_TABLE=51820
+readonly DNSCRYPT_HOST=127.0.0.1
+readonly DNSCRYPT_PORT=5300
+readonly SSH_RUN_AS=matodor
+readonly SSH_CONFIG=/home/matodor/.ssh/config
+readonly SSH_HOST=contabo-ai
+readonly REMOTE_HELPER=/usr/local/sbin/norma-assets-update-dynamic-targets
+
+install -d -m 700 "$STATE_DIR"
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+    echo "another domain update is already running"
+    exit 0
+fi
+
+[[ -r $DOMAINS_FILE ]] || {
+    echo "domains file not readable: $DOMAINS_FILE" >&2
+    exit 2
+}
+
+valid_ipv4() {
+    local ip=$1
+    local octet
+    local -a octets
+    [[ $ip =~ ^[0-9]+(\.[0-9]+){3}$ ]] || return 1
+    IFS='.' read -ra octets <<<"$ip"
+    (( ${#octets[@]} == 4 )) || return 1
+    for octet in "${octets[@]}"; do
+        [[ $octet =~ ^[0-9]+$ ]] || return 1
+        (( 10#$octet <= 255 )) || return 1
+    done
+}
+
+valid_domain() {
+    local domain=$1
+    (( ${#domain} <= 253 )) &&
+        [[ $domain =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]
+}
+
+trim() {
+    local value=$1
+    value=${value#"${value%%[![:space:]]*}"}
+    value=${value%"${value##*[![:space:]]}"}
+    printf '%s' "$value"
+}
+
+declare -A domains_seen=()
+domains=()
+while IFS= read -r line || [[ -n $line ]]; do
+    line=${line%%#*}
+    line=$(trim "$line")
+    [[ -n $line ]] || continue
+    line=${line%.}
+    line=${line,,}
+    valid_domain "$line" || {
+        echo "invalid domain in $DOMAINS_FILE: $line" >&2
+        exit 2
+    }
+    if [[ -z ${domains_seen[$line]+set} ]]; then
+        domains_seen["$line"]=1
+        domains+=("$line")
+    fi
+done <"$DOMAINS_FILE"
+
+declare -A old_domain_ips=()
+declare -A old_ips=()
+if [[ -f $STATE_FILE ]]; then
+    while IFS=$'\t' read -r domain ip; do
+        [[ -n $domain && -n $ip ]] || continue
+        valid_domain "$domain" || continue
+        valid_ipv4 "$ip" || continue
+        old_domain_ips["$domain"]+="$ip "
+        old_ips["$ip"]=1
+    done <"$STATE_FILE"
+fi
+
+state_tmp=$(mktemp "$STATE_DIR/domains-v4.tsv.XXXXXX")
+trap 'rm -f -- "$state_tmp"' EXIT
+declare -A new_ips=()
+
+for domain in "${domains[@]}"; do
+    resolved=()
+    while IFS= read -r answer; do
+        if valid_ipv4 "$answer"; then
+            resolved+=("$answer")
+        fi
+    done < <(
+        dig +time=2 +tries=2 +short A "$domain" \
+            "@$DNSCRYPT_HOST" -p "$DNSCRYPT_PORT" 2>/dev/null || true
+    )
+
+    if (( ${#resolved[@]} == 0 )); then
+        read -ra resolved <<<"${old_domain_ips[$domain]:-}"
+        if (( ${#resolved[@]} == 0 )); then
+            echo "no IPv4 answer and no stale state for: $domain" >&2
+            exit 3
+        fi
+        echo "warning: preserving stale IPv4 state for $domain" >&2
+    fi
+
+    declare -A domain_ip_seen=()
+    for ip in "${resolved[@]}"; do
+        [[ -z ${domain_ip_seen[$ip]+set} ]] || continue
+        domain_ip_seen["$ip"]=1
+        new_ips["$ip"]=1
+        printf '%s\t%s\n' "$domain" "$ip" >>"$state_tmp"
+    done
+    unset domain_ip_seen
+done
+
+LC_ALL=C sort -u -o "$state_tmp" "$state_tmp"
+mapfile -t old_ip_list < <(printf '%s\n' "${!old_ips[@]}" | sed '/^$/d' | sort -V)
+mapfile -t new_ip_list < <(printf '%s\n' "${!new_ips[@]}" | sed '/^$/d' | sort -V)
+
+remote_sync() {
+    printf '%s\n' "$@" |
+        runuser -u "$SSH_RUN_AS" -- \
+            ssh -F "$SSH_CONFIG" \
+            -o BatchMode=yes \
+            -o ConnectTimeout=10 \
+            "$SSH_HOST" \
+            sudo -n "$REMOTE_HELPER"
+}
+
+apply_local_runtime() {
+    systemctl is-active --quiet "$WG_UNIT" || return 0
+
+    local peer
+    local -a peers
+    mapfile -t peers < <(wg show "$WG_INTERFACE" peers)
+    (( ${#peers[@]} == 1 )) || {
+        echo "expected exactly one WireGuard peer, found ${#peers[@]}" >&2
+        return 1
+    }
+    peer=${peers[0]}
+
+    local ip
+    for ip in "${old_ip_list[@]}"; do
+        if [[ -z ${new_ips[$ip]+set} ]]; then
+            wg set "$WG_INTERFACE" peer "$peer" allowed-ips "-$ip/32" ||
+                return 1
+            ip -4 route del "$ip/32" dev "$WG_INTERFACE" \
+                table "$WG_TABLE" 2>/dev/null || true
+        fi
+    done
+
+    for ip in "${new_ip_list[@]}"; do
+        wg set "$WG_INTERFACE" peer "$peer" allowed-ips "+$ip/32" ||
+            return 1
+        ip -4 route replace "$ip/32" dev "$WG_INTERFACE" \
+            table "$WG_TABLE" || return 1
+    done
+}
+
+if ! remote_sync "${new_ip_list[@]}"; then
+    echo "remote dynamic nftables update failed; local state unchanged" >&2
+    exit 4
+fi
+
+if ! apply_local_runtime; then
+    echo "local WireGuard update failed; restoring previous server set" >&2
+    remote_sync "${old_ip_list[@]}" || true
+    exit 4
+fi
+
+install -m 600 -o root -g root "$state_tmp" "$STATE_FILE"
+trap - EXIT
+rm -f -- "$state_tmp"
+
+echo "domains=${#domains[@]} ipv4=${#new_ip_list[@]} wg=$(systemctl is-active "$WG_UNIT" 2>/dev/null || true)"
