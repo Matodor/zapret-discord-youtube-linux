@@ -125,6 +125,30 @@ stop_nfqws() {
 # Работа со стратегиями
 # -----------------------------------------------------------------------------
 
+sync_user_lists() {
+    local user_lists_dir="$BASE_DIR/user-lists"
+    local repo_lists_dir="$REPO_DIR/lists"
+    local user_list_files=(
+        "ipset-exclude-user.txt"
+        "list-general-user.txt"
+        "list-exclude-user.txt"
+    )
+
+    [[ -d "$repo_lists_dir" ]] || handle_error "Директория списков не найдена: $repo_lists_dir"
+
+    mkdir -p "$user_lists_dir"
+
+    local file
+    for file in "${user_list_files[@]}"; do
+        touch "$user_lists_dir/$file"
+        chmod 644 "$user_lists_dir/$file"
+        ln -f "$user_lists_dir/$file" "$repo_lists_dir/$file" 2>/dev/null || {
+            cp -f "$user_lists_dir/$file" "$repo_lists_dir/$file"
+            chmod 644 "$repo_lists_dir/$file"
+        }
+    done
+}
+
 # Настройка репозитория со стратегиями
 # Требует: REPO_DIR, REPO_URL, MAIN_REPO_REV, BASE_DIR, INTERACTIVE_MODE (опционально)
 # Аргументы:
@@ -177,23 +201,7 @@ setup_repository() {
 
     # Создаём пользовательские списки (только если в стратегиях есть директория lists)
     if [[ -d "$REPO_DIR/lists" ]]; then
-        local user_lists_dir="$BASE_DIR/user-lists"
-        mkdir -p "$user_lists_dir"
-
-        # Создаем lists (touch не перезаписывает файлы если они существовали)
-        touch "$user_lists_dir/ipset-exclude-user.txt"
-        touch "$user_lists_dir/list-general-user.txt"
-        touch "$user_lists_dir/list-exclude-user.txt"
-
-        # Делаем файлы читаемыми для всех (nfqws запускается под nobody)
-        chmod 644 "$user_lists_dir/ipset-exclude-user.txt"
-        chmod 644 "$user_lists_dir/list-general-user.txt"
-        chmod 644 "$user_lists_dir/list-exclude-user.txt"
-
-        # Создаём хардлинки (не симлинки!) чтобы обойти проблемы с доступом к /home/user
-        for file in "$user_lists_dir"/*; do
-            ln -f "$file" "$REPO_DIR/lists/" 2>/dev/null || true
-        done
+        sync_user_lists
     fi
 }
 
@@ -344,12 +352,7 @@ parse_bat_file() {
 
     debug_log "File content loaded"
 
-    # Заменяем переменные. Пользовательские списки должны жить вне
-    # zapret-latest, потому что каталог со стратегиями может пересоздаваться.
-    local user_lists_path="$BASE_DIR/user-lists/"
-    content="${content//%LISTS%list-general-user.txt/${user_lists_path}list-general-user.txt}"
-    content="${content//%LISTS%list-exclude-user.txt/${user_lists_path}list-exclude-user.txt}"
-    content="${content//%LISTS%ipset-exclude-user.txt/${user_lists_path}ipset-exclude-user.txt}"
+    # Заменяем переменные
     content="${content//%BIN%/$bin_path}"
     content="${content//%LISTS%/lists/}"
 
@@ -504,6 +507,7 @@ run_zapret() {
     fi
 
     # Парсим стратегию
+    sync_user_lists
     parse_bat_file "$strategy_path"
 
     # Настройка файрвола

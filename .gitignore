@@ -6,3 +6,4 @@ auto_tune_youtube_results.txt
 conf.env.backup
 auto_tune_results.txt
 .norma-assets-askpass
+network.log
