@@ -10,6 +10,7 @@ readonly DOMAINS_FILE=/home/matodor/Bin/zapret-discord-youtube-linux/norma-asset
 readonly STATE_DIR=/var/lib/norma-assets
 readonly STATE_FILE="$STATE_DIR/domains-v4.tsv"
 readonly LOCK_FILE=/run/norma-assets-domains.lock
+readonly ROTATED_IP_GRACE_SECONDS=86400
 readonly WG_INTERFACE=wg-assets
 readonly WG_UNIT=wg-quick@wg-assets.service
 readonly WG_TABLE=51820
@@ -76,14 +77,21 @@ while IFS= read -r line || [[ -n $line ]]; do
     fi
 done <"$DOMAINS_FILE"
 
+NOW=$(date +%s)
+readonly NOW
 declare -A old_domain_ips=()
+declare -A old_domain_ip_seen=()
 declare -A old_ips=()
 if [[ -f $STATE_FILE ]]; then
-    while IFS=$'\t' read -r domain ip; do
+    while IFS=$'\t' read -r domain ip last_seen _; do
         [[ -n $domain && -n $ip ]] || continue
         valid_domain "$domain" || continue
         valid_ipv4 "$ip" || continue
+        if [[ ! $last_seen =~ ^[0-9]+$ ]] || (( last_seen > NOW )); then
+            last_seen=$NOW
+        fi
         old_domain_ips["$domain"]+="$ip "
+        old_domain_ip_seen["$domain|$ip"]=$last_seen
         old_ips["$ip"]=1
     done <"$STATE_FILE"
 fi
@@ -93,6 +101,7 @@ trap 'rm -f -- "$state_tmp"' EXIT
 declare -A new_ips=()
 resolved_domains=0
 skipped_domains=0
+retained_rotated_ips=0
 
 for domain in "${domains[@]}"; do
     resolved=()
@@ -105,7 +114,9 @@ for domain in "${domains[@]}"; do
             "@$DNSCRYPT_HOST" -p "$DNSCRYPT_PORT" 2>/dev/null || true
     )
 
+    dns_answered=1
     if (( ${#resolved[@]} == 0 )); then
+        dns_answered=0
         read -ra resolved <<<"${old_domain_ips[$domain]:-}"
         if (( ${#resolved[@]} == 0 )); then
             echo "warning: no IPv4 answer; skipping new domain $domain" >&2
@@ -121,8 +132,27 @@ for domain in "${domains[@]}"; do
         [[ -z ${domain_ip_seen[$ip]+set} ]] || continue
         domain_ip_seen["$ip"]=1
         new_ips["$ip"]=1
-        printf '%s\t%s\n' "$domain" "$ip" >>"$state_tmp"
+        last_seen=$NOW
+        if (( ! dns_answered )); then
+            last_seen=${old_domain_ip_seen["$domain|$ip"]:-$NOW}
+        fi
+        printf '%s\t%s\t%s\n' "$domain" "$ip" "$last_seen" >>"$state_tmp"
     done
+
+    if (( dns_answered )); then
+        read -ra previous <<<"${old_domain_ips[$domain]:-}"
+        for ip in "${previous[@]}"; do
+            [[ -z ${domain_ip_seen[$ip]+set} ]] || continue
+            last_seen=${old_domain_ip_seen["$domain|$ip"]:-$NOW}
+            if (( NOW - last_seen <= ROTATED_IP_GRACE_SECONDS )); then
+                domain_ip_seen["$ip"]=1
+                new_ips["$ip"]=1
+                printf '%s\t%s\t%s\n' \
+                    "$domain" "$ip" "$last_seen" >>"$state_tmp"
+                (( retained_rotated_ips += 1 ))
+            fi
+        done
+    fi
     unset domain_ip_seen
 done
 
@@ -190,4 +220,4 @@ install -m 600 -o root -g root "$state_tmp" "$STATE_FILE"
 trap - EXIT
 rm -f -- "$state_tmp"
 
-echo "domains=${#domains[@]} resolved=$resolved_domains skipped=$skipped_domains ipv4=${#new_ip_list[@]} wg=$(systemctl is-active "$WG_UNIT" 2>/dev/null || true)"
+echo "domains=${#domains[@]} resolved=$resolved_domains skipped=$skipped_domains ipv4=${#new_ip_list[@]} retained_rotated=$retained_rotated_ips grace=${ROTATED_IP_GRACE_SECONDS}s wg=$(systemctl is-active "$WG_UNIT" 2>/dev/null || true)"

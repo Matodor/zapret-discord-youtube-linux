@@ -52,7 +52,11 @@ an exact `/32` CIDR, and transactionally synchronizes:
 Exact `/32` routes are deliberate. Expanding a CDN hostname to a provider ASN
 would route large unrelated networks through the tunnel. If DNS temporarily
 fails, the updater keeps the last known addresses from
-`/var/lib/norma-assets/domains-v4.tsv`.
+`/var/lib/norma-assets/domains-v4.tsv`. When a rotating DNS answer replaces an
+address, the old `/32` is retained for 24 hours. This grace period keeps
+long-lived HTTP/2 and WebSocket connections on WireGuard instead of moving
+their destination back to the physical default route mid-connection. The state
+file stores `domain`, IPv4 address, and its last DNS confirmation timestamp.
 
 Run an immediate refresh and inspect it with:
 

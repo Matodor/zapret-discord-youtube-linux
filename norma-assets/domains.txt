@@ -477,3 +477,4 @@ www.kinozal.tv
 
 # Cursor
 agentn.global.api5.cursor.sh
+agentn.us.api5.cursor.sh
