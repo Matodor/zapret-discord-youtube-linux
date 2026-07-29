@@ -42,8 +42,13 @@ wildcards are not, because DNS cannot enumerate all names below a wildcard.
 
 `norma-assets-domains.path` reacts to file changes, and
 `norma-assets-domains.timer` refreshes records every five minutes. The updater
-resolves current A records through local DNSCrypt, represents each answer as
-an exact `/32` CIDR, and transactionally synchronizes:
+unions current A records from local DNSCrypt and the systemd-resolved
+application lookup used by software such as Node.js. Each application lookup
+has a five-second timeout, so one unresponsive name cannot block the complete
+refresh. This covers
+resolver-dependent CDN/load-balancer answers, including differences between
+AF_INET and AF_UNSPEC lookups. It represents each answer as an exact `/32` CIDR
+and transactionally synchronizes:
 
 1. the WireGuard peer runtime `AllowedIPs`;
 2. routes in table `51820`;
@@ -74,9 +79,12 @@ The service uses the `contabo-ai` entry from
 
 DNSCrypt DoH endpoints are routed through WireGuard. On every `wg-assets`
 start, `dnscrypt-proxy` is restarted after the tunnel path is available and
-the resolver cache is flushed. During installation, the Amnezia-only bootstrap
-resolver `172.29.172.254` is replaced with `1.1.1.1` and `9.9.9.9`; rollback
-restores the original configuration.
+the resolver cache is flushed. The refresh hook waits up to 90 seconds for the
+local DNSCrypt listener to return an A record, preventing a transient boot race
+from leaving `wg-quick@wg-assets.service` failed with only static routes
+installed. During installation, the Amnezia-only bootstrap resolver
+`172.29.172.254` is replaced with `1.1.1.1` and `9.9.9.9`; rollback restores the
+original configuration.
 
 ## Installation
 

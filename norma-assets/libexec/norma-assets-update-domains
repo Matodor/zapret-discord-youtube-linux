@@ -110,8 +110,16 @@ for domain in "${domains[@]}"; do
             resolved+=("$answer")
         fi
     done < <(
-        dig +time=2 +tries=2 +short A "$domain" \
-            "@$DNSCRYPT_HOST" -p "$DNSCRYPT_PORT" 2>/dev/null || true
+        {
+            dig +time=2 +tries=2 +short A "$domain" \
+                "@$DNSCRYPT_HOST" -p "$DNSCRYPT_PORT" 2>/dev/null
+            timeout 5s resolvectl --legend=no query "$domain" 2>/dev/null |
+                awk '{
+                    for (field = 1; field <= NF; field++) {
+                        print $field
+                    }
+                }'
+        } || true
     )
 
     dns_answered=1

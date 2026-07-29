@@ -65,6 +65,7 @@ for command_path in \
     /usr/bin/dig \
     /usr/bin/flock \
     /usr/bin/resolvectl \
+    /usr/bin/timeout \
     /usr/bin/runuser \
     /usr/bin/ssh \
     /usr/bin/wg; do
